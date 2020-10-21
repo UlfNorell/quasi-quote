@@ -1,3 +1,4 @@
+{-# OPTIONS --safe #-}
 
 module QuasiQuoting where
 
@@ -7,13 +8,13 @@ open import Data.Bool
 open import Data.Nat
 open import Data.List
 open import Data.Empty using (⊥)
-open import Data.Maybe hiding (_>>=_)
+open import Data.Maybe hiding (_>>=_; map)
 open import Data.Word using (Word64)
 open import Data.String using (String)
 open import Data.Char using (Char)
 open import Data.Float using (Float)
 open import Data.Product using (_×_; _,_)
-open import Category.Monad
+open import Category.Monad using (RawMonad)
 open import Function
 open import Relation.Binary.PropositionalEquality
 
@@ -47,22 +48,31 @@ pattern ⟨tel⟩ = ⟨list⟩ (⟨named⟩ (⟨arg⟩ ⟨term⟩))
 
 data InsideQuote : Set where
 
-!_ : ⦃ InsideQuote ⦄ → Term → A -- add phase instance argument to prevent use outside quotes
-!_ ⦃ ⦄
+ensureInsideQuote : Term → TC ⊤
+ensureInsideQuote hole = do
+  n ← length <$> getContext
+  foldr catchTC (typeErrorFmt "Phase violation: splice used outside quote")
+    (map (λ i → unify hole (var i [])) (downFrom n))
 
-!⟨_∶_⟩ : ⦃ InsideQuote ⦄ → Term → (A : Set ℓ) → A
+-- The (empty) InsideQuote argument guarantees that splice can only be
+-- used inside a quote. Use a tactic argument instead of an instance
+-- argument to make it possible to nest quotes.
+!_ : {@(tactic ensureInsideQuote) i : InsideQuote} → Term → A
+!_ {i = ()}
+
+!⟨_∶_⟩ : {@(tactic ensureInsideQuote) _ : InsideQuote} → Term → (A : Set ℓ) → A
 !⟨ t ∶ _ ⟩ = ! t
 
 splice : ℕ → Term → TC Term
 splice 0 `t = pure `t
 splice n `t = do
   just `t ← pure $ strengthenBy n `t
-    where nothing → typeErrorFmt "deBruijn badness"
+    where nothing → typeErrorFmt "Phase violation: quoted variable used in splice"
   return (def₂ (quote weaken) (lit (nat n)) `t)
 
 qquote : ℕ → ⟦ u ⟧ → TC Term
-qquote {⟨term⟩} n (def (quote !_) (hArg _ ∷ hArg _ ∷ iArg _ ∷ vArg `t ∷ [])) = splice n `t
-qquote {⟨term⟩} n (def (quote !⟨_∶_⟩) (hArg _ ∷ iArg _ ∷ vArg `t ∷ vArg _ ∷ [])) = splice n `t
+qquote {⟨term⟩} n (def (quote !_)     (hArg _ ∷ hArg _ ∷ hArg _ ∷ vArg `t ∷ [])) = splice n `t
+qquote {⟨term⟩} n (def (quote !⟨_∶_⟩) (hArg _ ∷ hArg _ ∷ vArg `t ∷ vArg _ ∷ [])) = splice n `t
 qquote {⟨term⟩} n t@(var x args) =
   if x <ᵇ n then con₂ (quote Term.var) (quoteVal x) <$> qquote n args
             else splice n (def₁ (quote quoteVal) t)
@@ -99,12 +109,12 @@ blockIfMeta : Term → TC Term
 blockIfMeta (meta x _) = blockOnMeta x
 blockIfMeta t = pure t
 
-quasiQuote : (⦃ InsideQuote ⦄ → A) → Term → TC ⊤
+quasiQuote : ({InsideQuote} → A) → Term → TC ⊤
 quasiQuote x hole = do
-  lam _ (abs _ t) ← quoteTC (λ i → x ⦃ i ⦄)
-    where t → typeErrorFmt "Bad quote: %t" t
+  lam _ (abs _ t) ← quoteTC (λ i → x {i})
+    where t → typeErrorFmt "Impossible: %t" t
   just t ← strengthen <$> qquote 0 t
-    where nothing → typeErrorFmt "Phase violation"
+    where nothing → typeErrorFmt "Phase violation: InsideQuote token escaping the quote"
   unify hole t
 
 macro

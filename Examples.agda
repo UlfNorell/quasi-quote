@@ -1,3 +1,4 @@
+{-# OPTIONS --safe #-}
 
 module Examples where
 
@@ -38,7 +39,10 @@ private
 -- Example: simple
 
 test₁ : Term → Term
-test₁ t = `(λ n → n + ! t)
+test₁ t = ` λ n → n + ! t
+
+check₁ : test₁ (var 0 []) ≡ lam visible (abs "n" (def₂ (quote _+_) (var 0 []) (var 1 [])))
+check₁ = refl                                          -- Lifted automatically ^^^^^^^^
 
 -- Example: building terms with quasi-quoting
 
@@ -60,28 +64,27 @@ nAry : ℕ → Term → Term → Term
 nAry zero    A B = B
 nAry (suc n) A B = ` (!⟨ A ∶ Set ⟩ → !⟨ nAry n A B ∶ Set ⟩)
 
--- Example: trying to cheat
-
--- cheat : ⊥
--- cheat = ! lit (nat 5) -- No instance of type QuasiQuoting.InsideQuote found
-
--- macro
---   sneaky-cheat : Term → TC ⊤
---   sneaky-cheat hole =
---     case ` !_ {A = Term → Set} of λ where   -- Phase violation
---       (def _ (_ ∷ _ ∷ iArg i ∷ _)) → unify hole i
---       _ → typeErrorFmt "too bad"
-
--- boom : ⊥
--- boom = !_ ⦃ sneaky-cheat ⦄ (var 0 [])
-
 -- Example: nested quotes
 
--- plus1 : Term → Term
--- plus1 t = ` ! t + 1
+plus1 : Term → Term
+plus1 t = ` ! t + 1
 
--- nested : Term → Term
--- nested t = ` ! (` !⟨ plus1 t ∶ ℕ ⟩) + 5
+nested : Term → Term
+nested t = ` ! plus1 (` 2 * ! t) + 5
+
+check-nested : ∀ t → nested t ≡ (` 2 * ! t + 1 + 5)
+check-nested t = refl
+
+-- Example: trying to break things
+
+-- bad : Term
+-- bad = ` λ t → !⟨ t ∶ Term ⟩   -- Phase violation: quoted variable used in splice
+
+-- boom : ⊥
+-- boom = ! lit (nat 4) -- Phase violation: splice used outside quote
+
+-- escape : Term
+-- escape = `_ λ {i} → i   -- Phase violation: InsideQoute token escaping the quote
 
 -- Example: Quotable instance for lists
 
